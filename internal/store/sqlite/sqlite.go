@@ -35,6 +35,7 @@ type Store struct {
 	activity   *activityRepository
 	cache      *cacheRepository
 	captures   *captureRepository
+	uiAuth     *uiAuthRepository
 }
 
 var _ store.Store = (*Store)(nil)
@@ -75,6 +76,7 @@ func New(path, capturesPath string) (*Store, error) {
 		activity:   &activityRepository{db: db},
 		cache:      &cacheRepository{db: db},
 		captures:   captures,
+		uiAuth:     &uiAuthRepository{db: db, persistent: diskFile},
 	}
 	// Drop cache rows that expired while the process was not running, so a
 	// long-lived database does not accumulate them.
@@ -154,6 +156,9 @@ func (s *Store) Cache() store.CacheRepository {
 func (s *Store) Captures() store.CaptureRepository {
 	return s.captures
 }
+
+// UIAuth implements store.Store.
+func (s *Store) UIAuth() store.UIAuthRepository { return s.uiAuth }
 
 // IsInMemory implements store.Store.
 func (s *Store) IsInMemory() bool {

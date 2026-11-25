@@ -4,6 +4,8 @@
   import Router, { replace } from "svelte-spa-router";
   import { wrap } from "svelte-spa-router/wrap";
   import AppSidebar from "./components/AppSidebar.svelte";
+  import Login from "./components/Login.svelte";
+  import { uiAuth, checkUIAuth, logoutUIAuth } from "./stores/uiAuth";
   import RouteLoadingImpl from "./components/RouteLoading.svelte";
   import AlwaysMountedStub from "./routes/AlwaysMountedStub.svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
@@ -153,23 +155,42 @@
   onMount(() => {
     const cleanupScreenWidth = initScreenWidth();
     const cleanupSystemTheme = initSystemThemeListener();
-    enableAPIEvents(true);
-    checkPerformanceEnabled();
-    import("./routes/Playground.svelte").then((m) => {
-      PlaygroundComponent = m.default;
-    });
-    import("./routes/Help.svelte").then((m) => {
-      HelpComponent = m.default;
-    });
-
+    void checkUIAuth().then((state) => {
+      if (!state.enabled || state.authenticated) startUI();
+    }).catch((error) => console.error("Unable to check UI authentication", error));
     return () => {
       cleanupScreenWidth();
       cleanupSystemTheme();
       enableAPIEvents(false);
     };
   });
+
+  let uiStarted = $state(false);
+  async function handleSignOut(): Promise<void> {
+    await logoutUIAuth();
+    enableAPIEvents(false);
+    uiStarted = false;
+  }
+
+  function startUI(): void {
+    if (uiStarted) return;
+    uiStarted = true;
+    enableAPIEvents(true);
+    checkPerformanceEnabled();
+    import("./routes/Playground.svelte").then((m) => { PlaygroundComponent = m.default; });
+    import("./routes/Help.svelte").then((m) => { HelpComponent = m.default; });
+  }
+
+  $effect(() => {
+    if ($uiAuth.enabled && $uiAuth.authenticated && !uiStarted) startUI();
+  });
 </script>
 
+{#if $uiAuth.loading}
+  <div class="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Checking sign-in...</div>
+{:else if $uiAuth.enabled && !$uiAuth.authenticated}
+  <Login />
+{:else}
 <Tooltip.Provider>
   {#if $inferencePaused}
     <div
@@ -237,6 +258,9 @@
         {:else}
           <h2 class="truncate pb-0 text-sm font-semibold">{sectionTitle}</h2>
         {/if}
+        {#if $uiAuth.enabled && $uiAuth.authenticated}
+          <button class="ml-auto rounded-md border px-3 py-1 text-sm hover:bg-muted" onclick={() => void handleSignOut()}>Sign out</button>
+        {/if}
         {#if $profiles.length > 0}
           <div class="ml-auto flex items-center gap-2">
             <span class="text-muted-foreground hidden text-xs sm:inline">Profile</span>
@@ -287,3 +311,4 @@
     </Sidebar.Inset>
   </Sidebar.Provider>
 </Tooltip.Provider>
+{/if}
