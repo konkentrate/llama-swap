@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"net"
@@ -13,8 +14,6 @@ import (
 	"time"
 
 	"github.com/mostlygeek/llama-swap/internal/chain"
-	"github.com/mostlygeek/llama-swap/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const uiSessionCookie = "llama_swap_ui_session"
@@ -22,20 +21,18 @@ const uiSessionTTL = 12 * time.Hour
 
 type uiSession struct{ expires time.Time }
 type uiAuthManager struct {
-	store         store.Store
+	keys          []string
 	mu            sync.Mutex
 	sessions      map[[32]byte]uiSession
 	loginAttempts map[string][]time.Time
 }
 
-func newUIAuthManager(st store.Store) *uiAuthManager {
-	return &uiAuthManager{store: st, sessions: make(map[[32]byte]uiSession), loginAttempts: make(map[string][]time.Time)}
-}
-
-func (m *uiAuthManager) revokeSessions() {
-	m.mu.Lock()
-	m.sessions = make(map[[32]byte]uiSession)
-	m.mu.Unlock()
+func newUIAuthManager(keys []string) *uiAuthManager {
+	return &uiAuthManager{
+		keys:          append([]string(nil), keys...),
+		sessions:      make(map[[32]byte]uiSession),
+		loginAttempts: make(map[string][]time.Time),
+	}
 }
 
 func (m *uiAuthManager) session(r *http.Request) bool {
@@ -61,20 +58,11 @@ func (m *uiAuthManager) session(r *http.Request) bool {
 	return true
 }
 
-func (m *uiAuthManager) middleware(apiKey chain.Middleware, apiKeyRequired bool) chain.Middleware {
+func (m *uiAuthManager) middleware(apiKey chain.Middleware) chain.Middleware {
 	return func(next http.Handler) http.Handler {
 		keyHandler := apiKey(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if m == nil || m.store == nil {
-				keyHandler.ServeHTTP(w, r)
-				return
-			}
-			_, _, enabled, err := m.store.UIAuth().Get(r.Context())
-			if err == nil && enabled && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/ui/") {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if err == nil && enabled && m.session(r) {
+			if m.session(r) {
 				if (isMutation(r.Method) || r.Header.Get("Origin") != "") && !sameOrigin(r) {
 					http.Error(w, "invalid origin", http.StatusForbidden)
 					return
@@ -82,8 +70,8 @@ func (m *uiAuthManager) middleware(apiKey chain.Middleware, apiKeyRequired bool)
 				next.ServeHTTP(w, r)
 				return
 			}
-			if err == nil && enabled && !apiKeyRequired {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+			if len(m.keys) > 0 && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/ui/") {
+				next.ServeHTTP(w, r)
 				return
 			}
 			keyHandler.ServeHTTP(w, r)
@@ -104,7 +92,7 @@ func sameOrigin(r *http.Request) bool {
 		return false
 	}
 	requestScheme := "http"
-	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	if secureRequest(r) {
 		requestScheme = "https"
 	}
 	if origin.Scheme != requestScheme {
@@ -134,63 +122,51 @@ func writeUIJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+func (m *uiAuthManager) validAPIKey(provided string) bool {
+	valid := 0
+	for _, key := range m.keys {
+		valid |= subtle.ConstantTimeCompare([]byte(provided), []byte(key))
+	}
+	return valid == 1
+}
+
 func (s *Server) handleUIAuthStatus(w http.ResponseWriter, r *http.Request) {
-	_, _, enabled, err := s.store.UIAuth().Get(r.Context())
-	if err != nil {
-		http.Error(w, "auth status unavailable", http.StatusInternalServerError)
-		return
-	}
-	writeUIJSON(w, http.StatusOK, map[string]bool{"enabled": enabled, "authenticated": enabled && s.uiAuth.session(r), "available": !s.store.IsInMemory()})
+	writeUIJSON(w, http.StatusOK, map[string]bool{
+		"required":      len(s.uiAuth.keys) > 0,
+		"authenticated": len(s.uiAuth.keys) == 0 || s.uiAuth.session(r),
+	})
 }
 
-type uiAuthRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+type uiLoginRequest struct {
+	APIKey string `json:"apiKey"`
 }
 
-func decodeUIAuthRequest(w http.ResponseWriter, r *http.Request) (uiAuthRequest, bool) {
-	var req uiAuthRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if dec.Decode(&req) != nil || strings.TrimSpace(req.Username) != req.Username || len(req.Username) < 1 || len(req.Username) > 128 || len(req.Password) < 12 || len(req.Password) > 72 {
-		http.Error(w, "invalid username or password", http.StatusBadRequest)
-		return req, false
-	}
-	return req, true
-}
-
-func (s *Server) handleUIAuthSetup(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUIAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(r) {
 		http.Error(w, "invalid origin", http.StatusForbidden)
 		return
 	}
-	if len(s.cfg.RequiredAPIKeys) == 0 {
-		http.Error(w, "UI auth setup requires configured API keys", http.StatusForbidden)
+	if !s.uiAuth.allowLogin(r.RemoteAddr) {
+		http.Error(w, "too many login attempts", http.StatusTooManyRequests)
 		return
 	}
-	if s.store.IsInMemory() {
-		http.Error(w, "UI auth requires a persistent store", http.StatusConflict)
+	var req uiLoginRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if dec.Decode(&req) != nil || strings.TrimSpace(req.APIKey) != req.APIKey || req.APIKey == "" {
+		http.Error(w, "invalid API key", http.StatusBadRequest)
 		return
 	}
-	req, ok := decodeUIAuthRequest(w, r)
-	if !ok {
+	if !s.uiAuth.validAPIKey(req.APIKey) {
+		http.Error(w, "invalid API key", http.StatusUnauthorized)
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
-	if err != nil {
-		http.Error(w, "could not configure UI auth", http.StatusInternalServerError)
-		return
-	}
-	if err = s.store.UIAuth().Set(r.Context(), req.Username, string(hash)); err != nil {
-		http.Error(w, "UI auth is already configured or unavailable", http.StatusConflict)
-		return
-	}
-	s.uiAuth.revokeSessions()
+	s.uiAuth.clearLoginAttempts(r.RemoteAddr)
 	if !s.uiAuth.issue(w, r) {
 		return
 	}
-	writeUIJSON(w, http.StatusCreated, map[string]bool{"enabled": true, "authenticated": true})
+	writeUIJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 }
 
 func (m *uiAuthManager) allowLogin(remoteAddr string) bool {
@@ -234,35 +210,6 @@ func (m *uiAuthManager) clearLoginAttempts(remoteAddr string) {
 	m.mu.Lock()
 	delete(m.loginAttempts, ip)
 	m.mu.Unlock()
-}
-
-func (s *Server) handleUIAuthLogin(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(r) {
-		http.Error(w, "invalid origin", http.StatusForbidden)
-		return
-	}
-	if !s.uiAuth.allowLogin(r.RemoteAddr) {
-		http.Error(w, "too many login attempts", http.StatusTooManyRequests)
-		return
-	}
-	req, ok := decodeUIAuthRequest(w, r)
-	if !ok {
-		return
-	}
-	username, hash, enabled, err := s.store.UIAuth().Get(r.Context())
-	if err != nil {
-		http.Error(w, "auth unavailable", http.StatusInternalServerError)
-		return
-	}
-	if !enabled || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil || username != req.Username {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
-	}
-	s.uiAuth.clearLoginAttempts(r.RemoteAddr)
-	if !s.uiAuth.issue(w, r) {
-		return
-	}
-	writeUIJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 }
 
 func (s *Server) handleUIAuthLogout(w http.ResponseWriter, r *http.Request) {

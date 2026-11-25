@@ -19,9 +19,6 @@ type Store interface {
 	// Captures returns the repository for request/response captures.
 	Captures() CaptureRepository
 
-	// UIAuth returns the repository for the local browser UI account.
-	UIAuth() UIAuthRepository
-
 	// IsInMemory reports whether the activity database is not persisted to
 	// disk. In-memory stores are bounded by pruning rather than by disk.
 	IsInMemory() bool

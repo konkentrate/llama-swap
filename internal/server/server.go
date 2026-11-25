@@ -304,7 +304,7 @@ func New(cfg config.Config, logs *logmon.Group, perfMon *perf.Monitor, st store.
 		inflight:      newInflightTracker(),
 		metrics:       newMetricsMonitor(logs.ProxyLogs, cfg.MetricsMaxInMemory, cfg.CaptureBuffer, st),
 		store:         st,
-		uiAuth:        newUIAuthManager(st),
+		uiAuth:        newUIAuthManager(cfg.RequiredAPIKeys),
 		build:         build,
 		hardware:      hardware,
 		reference:     refs,
@@ -408,11 +408,11 @@ func stripAudioAPIPrefix(r *http.Request) {
 // global CORS middleware.
 func (s *Server) routes() {
 	if s.uiAuth == nil {
-		s.uiAuth = newUIAuthManager(s.store)
+		s.uiAuth = newUIAuthManager(s.cfg.RequiredAPIKeys)
 	}
 
 	apiKeyMW := CreateAuthMiddleware(s.cfg)
-	authMW := s.uiAuth.middleware(apiKeyMW, len(s.cfg.RequiredAPIKeys) > 0)
+	authMW := s.uiAuth.middleware(apiKeyMW)
 	modelMWs := []chain.Middleware{authMW, createContentTypeMiddleware(s.cfg.MaxRequestBodyBytes())}
 	// globalConcurrencyLimit guards the top of the inference chain; a limit of
 	// 0 (the default) means no limit, so the handler is left out of the chain
@@ -468,9 +468,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /wol-health", handleHealth)
 	mux.HandleFunc("GET /{$}", handleRootRedirect)
 
-	// UI-auth endpoints deliberately stay public except setup, which requires an API key.
+	// UI login uses the configured API key to establish a short-lived browser session.
 	mux.Handle("GET /api/ui-auth/status", publicChain.ThenFunc(s.handleUIAuthStatus))
-	mux.Handle("POST /api/ui-auth/setup", chain.New(apiKeyMW).ThenFunc(s.handleUIAuthSetup))
 	mux.Handle("POST /api/ui-auth/login", publicChain.ThenFunc(s.handleUIAuthLogin))
 	mux.Handle("POST /api/ui-auth/logout", publicChain.ThenFunc(s.handleUIAuthLogout))
 

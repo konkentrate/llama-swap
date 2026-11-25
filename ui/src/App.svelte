@@ -156,7 +156,7 @@
     const cleanupScreenWidth = initScreenWidth();
     const cleanupSystemTheme = initSystemThemeListener();
     void checkUIAuth().then((state) => {
-      if (!state.enabled || state.authenticated) startUI();
+      if (!state.required || state.authenticated) startUI();
     }).catch((error) => console.error("Unable to check UI authentication", error));
     return () => {
       cleanupScreenWidth();
@@ -182,13 +182,13 @@
   }
 
   $effect(() => {
-    if ($uiAuth.enabled && $uiAuth.authenticated && !uiStarted) startUI();
+    if ($uiAuth.required && $uiAuth.authenticated && !uiStarted) startUI();
   });
 </script>
 
 {#if $uiAuth.loading}
   <div class="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Checking sign-in...</div>
-{:else if $uiAuth.enabled && !$uiAuth.authenticated}
+{:else if $uiAuth.required && !$uiAuth.authenticated}
   <Login />
 {:else}
 <Tooltip.Provider>
@@ -258,7 +258,7 @@
         {:else}
           <h2 class="truncate pb-0 text-sm font-semibold">{sectionTitle}</h2>
         {/if}
-        {#if $uiAuth.enabled && $uiAuth.authenticated}
+        {#if $uiAuth.required && $uiAuth.authenticated}
           <button class="ml-auto rounded-md border px-3 py-1 text-sm hover:bg-muted" onclick={() => void handleSignOut()}>Sign out</button>
         {/if}
         {#if $profiles.length > 0}

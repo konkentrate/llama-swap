@@ -3,7 +3,6 @@
   import { versionInfo } from "../stores/api";
   import { showCapabilityTags } from "../stores/modelDisplay";
   import { showGenerationStats } from "../stores/generationStats";
-  import { uiAuth, submitUIAuth } from "../stores/uiAuth";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as Switch from "$lib/components/ui/switch/index.js";
   import * as Label from "$lib/components/ui/label/index.js";
@@ -16,26 +15,6 @@
 
   let themeLabel = $derived(themes.find((t) => t.value === $themeName)?.label ?? "Default");
   let modeLabel = $derived(modes.find((m) => m.value === $themeMode)?.label ?? "System");
-  let username = $state("");
-  let password = $state("");
-  let apiKey = $state("");
-  let authError = $state("");
-  let authMessage = $state("");
-  let authBusy = $state(false);
-
-  async function setupUIAuth(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    authError = "";
-    authMessage = "";
-    authBusy = true;
-    try {
-      await submitUIAuth("setup", { username, password }, apiKey);
-      username = ""; password = ""; apiKey = "";
-      authMessage = "UI sign-in enabled.";
-    } catch (error) {
-      authError = error instanceof Error ? error.message : "Could not configure sign-in";
-    } finally { authBusy = false; }
-  }
 </script>
 
 <div class="p-2">
@@ -77,28 +56,6 @@
     </div>
   </div>
 
-  <div class="rounded-lg border p-4 space-y-3 max-w-md mb-4">
-    <h4 class="text-sm font-semibold text-muted-foreground">UI sign-in</h4>
-    {#if $uiAuth.enabled}
-      <p class="text-sm text-muted-foreground">Username/password sign-in is enabled.</p>
-      <form class="space-y-3" onsubmit={setupUIAuth}>
-        <label class="block space-y-1 text-sm">New username<input class="w-full rounded-md border bg-background px-3 py-2" autocomplete="username" bind:value={username} required /></label>
-        <label class="block space-y-1 text-sm">New password<input class="w-full rounded-md border bg-background px-3 py-2" type="password" autocomplete="new-password" minlength="12" maxlength="72" bind:value={password} required /></label>
-        <label class="block space-y-1 text-sm">Existing API key<input class="w-full rounded-md border bg-background px-3 py-2" type="password" autocomplete="off" bind:value={apiKey} required /></label>
-        <button class="rounded-md border px-3 py-2 text-sm disabled:opacity-50" disabled={authBusy}>Change credentials</button>
-      </form>
-    {:else}
-      <p class="text-sm text-muted-foreground">Protect this UI with a username and password. Setup requires an existing API key.</p>
-      <form class="space-y-3" onsubmit={setupUIAuth}>
-        <label class="block space-y-1 text-sm">Username<input class="w-full rounded-md border bg-background px-3 py-2" autocomplete="username" bind:value={username} required /></label>
-        <label class="block space-y-1 text-sm">Password<input class="w-full rounded-md border bg-background px-3 py-2" type="password" autocomplete="new-password" minlength="12" maxlength="72" bind:value={password} required /></label>
-        <label class="block space-y-1 text-sm">Existing API key<input class="w-full rounded-md border bg-background px-3 py-2" type="password" autocomplete="off" bind:value={apiKey} required /></label>
-        <button class="rounded-md border px-3 py-2 text-sm disabled:opacity-50" disabled={authBusy}>Enable UI sign-in</button>
-      </form>
-    {/if}
-    {#if authError}<p role="alert" class="text-sm text-destructive">{authError}</p>{/if}
-    {#if authMessage}<p role="status" class="text-sm">{authMessage}</p>{/if}
-  </div>
 
   <div class="rounded-lg border p-4 space-y-3 max-w-md mb-4">
     <h4 class="text-sm font-semibold text-muted-foreground">Models page</h4>

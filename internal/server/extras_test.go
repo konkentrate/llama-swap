@@ -203,7 +203,7 @@ func TestServer_HandleUIAndFavicon(t *testing.T) {
 // fetches /ui/site.webmanifest and the icons it references itself while
 // deciding whether to offer installing the PWA, and can't attach an API key,
 // so they must stay reachable even when apiKeys is set, while the rest of
-// /ui/ stays protected.
+// /ui/ remains reachable so the app can render its API-key login form.
 func TestServer_WebManifestBypassesAuth(t *testing.T) {
 	cfg := config.Config{RequiredAPIKeys: []string{"secret"}}
 	s := newTestServerWithConfig(cfg, newStubRouter(nil, ""), newStubRouter(nil, ""))
@@ -225,8 +225,8 @@ func TestServer_WebManifestBypassesAuth(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/", nil))
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("/ui/: status = %d, want 401", w.Code)
+	if w.Code == http.StatusUnauthorized {
+		t.Errorf("/ui/: status = %d, want login shell to bypass API-key auth", w.Code)
 	}
 }
 

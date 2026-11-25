@@ -20,13 +20,13 @@ apiKeys:
 ```
 
 Clients may present it as `Authorization: Bearer <key>`, `x-api-key: <key>`, or
-HTTP Basic. The web UI and everything under `/api/` are covered too. The UI also supports
-an optional username/password sign-in configured from Settings after an
-API-key-authenticated setup; it is stored in the persistent SQLite store and
-leaves API-key authentication unchanged for clients. UI sign-in requires a
-persistent `store.path` and configured `apiKeys`; without either, setup is
-unavailable. Sessions last 12 hours and are lost when the server restarts. Use HTTPS when
-accessing the UI over an untrusted network.
+HTTP Basic. The web UI and everything under `/api/` are covered too. When
+`apiKeys` are configured, the UI shows a sign-in page where you enter one of
+them instead of relying on the browser's Basic Auth popup. The key is exchanged
+for an HTTP-only browser session cookie; it is not stored in browser storage.
+Sessions last 12 hours and are lost when the server restarts. API clients still
+use their API keys directly. Use HTTPS when accessing the UI over an untrusted
+network.
 
 A handful of static files stay reachable without a key regardless:
 `/favicon.ico`, `/ui/site.webmanifest`, and the two icons it references
